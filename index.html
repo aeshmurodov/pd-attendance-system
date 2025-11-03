@@ -17,61 +17,61 @@
 
 <style>
   @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: scale(0.8) rotate(-5deg);
+    from { 
+      opacity: 0; 
+      transform: scale(0.8) rotate(-5deg); 
     }
-    to {
-      opacity: 1;
-      transform: scale(1) rotate(0deg);
+    to { 
+      opacity: 1; 
+      transform: scale(1) rotate(0deg); 
     }
   }
-
+  
   @keyframes pulse {
-    0%, 100% {
-      transform: scale(1);
-      opacity: 1;
+    0%, 100% { 
+      transform: scale(1); 
+      opacity: 1; 
     }
-    50% {
-      transform: scale(1.05);
-      opacity: 0.7;
+    50% { 
+      transform: scale(1.05); 
+      opacity: 0.7; 
     }
   }
-
+  
   @keyframes rotate {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
-
+  
   .qr-new {
     animation: fadeIn 0.6s ease-out;
   }
-
+  
   .pulse-warning {
     animation: pulse 1.5s infinite;
   }
-
+  
   .loading-spinner {
     animation: rotate 1s linear infinite;
   }
-
+  
   #qr-container {
     min-height: 256px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
-
+  
   .timer-circle {
     transform: rotateY(180deg) rotateZ(-90deg);
   }
-
+  
   .timer-circle-bg {
     stroke: #e5e7eb;
     stroke-width: 8;
     fill: none;
   }
-
+  
   .timer-circle-progress {
     stroke-dasharray: 377;
     stroke-dashoffset: 0;
@@ -88,26 +88,27 @@
 <script>
 (() => {
   'use strict';
-
+  
   // ==================== КОНФИГУРАЦИЯ ====================
   const CONFIG = {
     TOKEN_LIFETIME: 3 * 60 * 1000, // 3 минуты
     AUTO_REFRESH: true,
     TIMER_UPDATE_INTERVAL: 250, // Обновление 4 раза в секунду
-    DEBUG: true // Включить логирование
+    DEBUG: true, // Включить логирование
+    ATTENDANCE_COOLDOWN_MS: 90 * 60 * 1000 // 90 минут в миллисекундах
   };
 
   // ==================== Firebase Конфигурация ====================
   // !!! ВАЖНО: ЗАМЕНИТЕ ЭТО НА ВАШИ РЕАЛЬНЫЕ ДАННЫЕ ИЗ КОНСОЛИ FIREBASE !!!
   const firebaseConfig = {
-    apiKey: "AIzaSyDYnHchI8ozY2dTe4bt_qcGgo9p1VdwPws",
-    authDomain: "sc-attendance-system.firebaseapp.com",
-    projectId: "sc-attendance-system",
-    storageBucket: "sc-attendance-system.firebasestorage.app",
-    messagingSenderId: "524269299204",
-    appId: "1:524269299204:web:b2a53dc417286065c77751"
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+    appId: "YOUR_APP_ID"
   };
-
+  
   // Инициализация Firebase
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
@@ -117,32 +118,32 @@
   const attendanceCol = db.collection('attendance');
   const usedTokensCol = db.collection('usedTokens');
   // ==================== /Firebase Конфигурация ====================
-
+  
   // ==================== УТИЛИТЫ ====================
-
+  
   const log = (...args) => {
     if (CONFIG.DEBUG) console.log('[QR System]', ...args);
   };
-
+  
   const error = (...args) => {
     console.error('[QR System Error]', ...args);
   };
-
+  
   // Получение базового URL
   function getBaseUrl() {
     // Для локальной разработки или файловой системы
     if (window.location.protocol === 'file:') {
       // Используем локальный IP или localhost
-      return 'https://pd-attendance-system.vercel.app'; // Пример, измените при необходимости
+      return 'http://localhost:8080/index.html'; // Пример, измените при необходимости
     }
-
+    
     const { protocol, hostname, port, pathname } = window.location;
     let url = `${protocol}//${hostname}`;
     if (port) url += `:${port}`;
     url += pathname;
     return url;
   }
-
+  
   // Локальное хранилище для НЕкритичных данных (Firebase будет для основного)
   const localCache = {
     set(key, value) {
@@ -154,7 +155,7 @@
         return false;
       }
     },
-
+    
     get(key, defaultValue = null) {
       try {
         const item = localStorage.getItem(key);
@@ -164,7 +165,7 @@
         return defaultValue;
       }
     },
-
+    
     remove(key) {
       try {
         localStorage.removeItem(key);
@@ -175,26 +176,26 @@
       }
     }
   };
-
+  
   // ==================== СОСТОЯНИЕ ПРИЛОЖЕНИЯ ====================
-
+  
   const state = {
     // Данные: теперь будут загружаться из Firebase
     allowedPeople: [], // { id, name }
     attendance: [],
     usedTokens: [],
-
+    
     // Текущий токен (будет в localCache)
     currentToken: localCache.get('currentToken', null),
     tokenExpiry: localCache.get('tokenExpiry', null),
-
+    
     // UI состояние
     currentView: 'loading',
-
+    
     // Таймеры
     autoRefreshTimer: null,
     countdownTimer: null,
-
+    
     // QR объект
     qrCode: null,
 
@@ -203,40 +204,40 @@
     attendanceListener: null,
     usedTokensListener: null
   };
-
+  
   // ==================== УПРАВЛЕНИЕ ТОКЕНАМИ ====================
-
+  
   class TokenManager {
     static generate() {
       const timestamp = Date.now();
       const random1 = Math.random().toString(36).substring(2, 10);
       const random2 = Math.random().toString(36).substring(2, 10);
       const token = `${timestamp}-${random1}-${random2}`;
-
+      
       log('Generated token:', token);
       return token;
     }
-
+    
     static create() {
       // Очищаем старые таймеры
       this.clearTimers();
-
+      
       // Создаем новый токен
       state.currentToken = this.generate();
       state.tokenExpiry = Date.now() + CONFIG.TOKEN_LIFETIME;
-
+      
       // Сохраняем в локальный кэш, так как это данные сессии
       localCache.set('currentToken', state.currentToken);
       localCache.set('tokenExpiry', state.tokenExpiry);
-
+      
       log('Token created, expires:', new Date(state.tokenExpiry).toLocaleTimeString());
-
+      
       // Запускаем таймеры
       this.startTimers();
-
+      
       return state.currentToken;
     }
-
+    
     static clearTimers() {
       if (state.autoRefreshTimer) {
         clearTimeout(state.autoRefreshTimer);
@@ -247,13 +248,13 @@
         state.countdownTimer = null;
       }
     }
-
+    
     static startTimers() {
       // Таймер обратного отсчета
       state.countdownTimer = setInterval(() => {
         this.updateTimer();
       }, CONFIG.TIMER_UPDATE_INTERVAL);
-
+      
       // Автообновление
       if (CONFIG.AUTO_REFRESH) {
         state.autoRefreshTimer = setTimeout(() => {
@@ -265,20 +266,20 @@
         }, CONFIG.TOKEN_LIFETIME);
       }
     }
-
+    
     static updateTimer() {
       if (!state.tokenExpiry) return;
-
+      
       const remaining = Math.max(0, state.tokenExpiry - Date.now());
       const percentage = remaining / CONFIG.TOKEN_LIFETIME;
-
+      
       // Обновляем текст таймера
       const timerText = document.getElementById('timer-text');
       if (timerText) {
         const minutes = Math.floor(remaining / 60000);
         const seconds = Math.floor((remaining % 60000) / 1000);
         timerText.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
+        
         // Изменяем цвет
         timerText.className = 'text-3xl font-bold transition-colors ';
         if (remaining < 30000) {
@@ -289,7 +290,7 @@
           timerText.className += 'text-green-600';
         }
       }
-
+      
       // Обновляем прогресс-бар
       const progressBar = document.getElementById('timer-bar');
       if (progressBar) {
@@ -303,14 +304,14 @@
           progressBar.className += 'bg-green-500';
         }
       }
-
+      
       // Обновляем круг
       const circle = document.getElementById('timer-circle');
       if (circle) {
         const circumference = 377; // 2 * PI * 60
         const offset = circumference * (1 - percentage);
         circle.style.strokeDashoffset = offset;
-
+        
         if (remaining < 30000) {
           circle.style.stroke = '#ef4444';
         } else if (remaining < 60000) {
@@ -319,34 +320,34 @@
           circle.style.stroke = '#10b981';
         }
       }
-
+      
       // Если время истекло
       if (remaining === 0 && state.currentView === 'admin' && !CONFIG.AUTO_REFRESH) {
         this.clearTimers();
         UI.showExpiredState();
       }
     }
-
+    
     static async validate(token) {
       if (!token) return false;
-
+      
       // Проверка использован ли из Firebase
       const usedTokenDoc = await usedTokensCol.doc(token).get();
       if (usedTokenDoc.exists) {
         log('Token already used:', token);
         return false;
       }
-
+      
       // Проверка времени
       try {
         const timestamp = parseInt(token.split('-')[0]);
         const age = Date.now() - timestamp;
-
+        
         if (age > CONFIG.TOKEN_LIFETIME) {
           log('Token expired. Age:', Math.floor(age / 1000), 'seconds');
           return false;
         }
-
+        
         log('Token valid');
         return true;
       } catch (e) {
@@ -354,7 +355,7 @@
         return false;
       }
     }
-
+    
     static async markAsUsed(token) {
       try {
         await usedTokensCol.doc(token).set({ timestamp: Date.now() });
@@ -367,9 +368,9 @@
       }
     }
   }
-
+  
   // ==================== UI УПРАВЛЕНИЕ ====================
-
+  
   const UI = {
     showNotification(message, type = 'info') {
       const colors = {
@@ -378,41 +379,41 @@
         warning: 'bg-orange-500',
         info: 'bg-blue-500'
       };
-
+      
       const notification = document.createElement('div');
-      notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50
+      notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50 
                                 transform translate-x-96 transition-transform duration-300 ${colors[type]}`;
       notification.textContent = message;
-
+      
       document.body.appendChild(notification);
-
+      
       setTimeout(() => {
         notification.classList.remove('translate-x-96');
       }, 100);
-
+      
       setTimeout(() => {
         notification.classList.add('translate-x-96');
         setTimeout(() => notification.remove(), 300);
       }, 3000);
     },
-
+    
     updateQRCode() {
       const container = document.getElementById('qr-container');
       if (!container || !state.currentToken) return;
-
+      
       const baseUrl = getBaseUrl();
       const qrUrl = `${baseUrl}?t=${state.currentToken}`;
-
+      
       log('Generating QR for:', qrUrl);
-
+      
       // Очищаем контейнер
       container.innerHTML = '';
-
+      
       // Создаем div для QR
       const qrDiv = document.createElement('div');
       qrDiv.className = 'qr-new';
       container.appendChild(qrDiv);
-
+      
       // Генерируем QR
       try {
         state.qrCode = new QRCode(qrDiv, {
@@ -423,14 +424,14 @@
           colorLight: '#ffffff',
           correctLevel: QRCode.CorrectLevel.H
         });
-
+        
         log('QR code generated successfully');
       } catch (e) {
         error('QR generation failed:', e);
         container.innerHTML = '<p class="text-red-600">Ошибка генерации QR</p>';
       }
     },
-
+    
     showExpiredState() {
       const container = document.getElementById('qr-status');
       if (container) {
@@ -438,8 +439,8 @@
           <div class="text-center py-8">
             <div class="text-6xl mb-4">⏰</div>
             <p class="text-xl text-red-600 font-bold mb-4">QR-код истёк</p>
-            <button onclick="App.refreshToken()"
-                    class="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white
+            <button onclick="App.refreshToken()" 
+                    class="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white 
                            rounded-lg hover:shadow-lg transition-all transform hover:scale-105">
               🔄 Создать новый QR
             </button>
@@ -448,14 +449,14 @@
       }
     }
   };
-
+  
   // ==================== БИЗНЕС-ЛОГИКА ====================
-
+  
   const App = {
     async loadExcelFile(event) {
       const file = event.target.files[0];
       if (!file) return;
-
+      
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
@@ -463,17 +464,23 @@
           const workbook = XLSX.read(data, { type: 'array' });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
           const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
+          
           const newAllowedPeople = [];
           const batch = db.batch();
+
+          log('Starting Excel file processing...');
 
           // Очищаем старые записи перед добавлением новых
           const oldDocs = await allowedPeopleCol.get();
           oldDocs.forEach(doc => {
             batch.delete(doc.ref);
+            log('Marked for deletion:', doc.id);
           });
+          log('Old documents marked for deletion.');
+
 
           // Предполагаем, что первая колонка - ID, вторая - ФИО
+          let rowCount = 0;
           for (let i = 1; i < jsonData.length; i++) { // Пропускаем заголовок
             const row = jsonData[i];
             if (row[0] && row[1]) { // Обе колонки должны быть заполнены
@@ -483,10 +490,15 @@
               };
               newAllowedPeople.push(personData);
               batch.set(allowedPeopleCol.doc(personData.id), personData); // Используем ID как document ID
+              rowCount++;
+            } else {
+                log('Skipping row due to missing ID or Name:', row);
             }
           }
-
+          log(`Prepared to add ${rowCount} new documents.`);
+          
           await batch.commit(); // Выполняем все операции батча
+          log('Firebase batch commit successful!');
           UI.showNotification(`✅ Загружено ${newAllowedPeople.length} студентов в Firebase`, 'success');
           // state.allowedPeople будет обновлен через onSnapshot
           // Render.view() вызовется после обновления state.allowedPeople
@@ -497,7 +509,7 @@
       };
       reader.readAsArrayBuffer(file);
     },
-
+    
     async registerAttendance() {
       const isNotRegistered = document.getElementById('notRegisteredCheckbox')?.checked;
       let personName = '';
@@ -506,12 +518,12 @@
 
       const urlParams = new URLSearchParams(window.location.search);
       const token = urlParams.get('t');
-
+      
       if (!token) {
         UI.showNotification('❌ Токен не найден', 'error');
         return;
       }
-
+      
       const tokenValid = await TokenManager.validate(token);
       if (!tokenValid) {
         UI.showNotification('❌ QR-код недействителен или уже использован', 'error');
@@ -521,6 +533,7 @@
         return;
       }
 
+      // Определяем personName и personId в зависимости от статуса регистрации
       if (isNotRegistered) {
         const nameInput = document.getElementById('nameInput');
         personName = nameInput.value.trim();
@@ -528,7 +541,7 @@
           UI.showNotification('Введите ФИО', 'warning');
           return;
         }
-        isValidEntry = true;
+        isValidEntry = true; 
         personId = `guest_${personName.replace(/\s+/g, '_')}_${Date.now()}`; // Более уникальный ID для гостей
       } else {
         const idInput = document.getElementById('uniqueIdInput');
@@ -539,7 +552,7 @@
         }
 
         const foundPerson = state.allowedPeople.find(person => person.id === uniqueId);
-
+        
         if (!foundPerson) {
           UI.showNotification('❌ Уникальный ID не найден в списке', 'error');
           return;
@@ -548,36 +561,47 @@
         personId = foundPerson.id;
         isValidEntry = true;
       }
-
+      
       if (!isValidEntry) return;
 
-      const today = new Date().toLocaleDateString('ru-RU');
-
-      // Проверка повторной отметки (по ФИО и дате) из Firebase
-      const existingAttendanceQuery = await attendanceCol
-        .where('name', '==', personName)
-        .where('date', '==', today)
+      const now = Date.now();
+      
+      // --- НОВАЯ ЛОГИКА ПРОВЕРКИ ИНТЕРВАЛА В 90 МИНУТ ---
+      // Запрашиваем последнее посещение для этого человека
+      const lastAttendanceQuery = await attendanceCol
+        .where('name', '==', personName) // Ищем по имени
+        .orderBy('timestamp', 'desc')   // Сортируем по убыванию времени
+        .limit(1)                       // Берем только последнюю запись
         .get();
 
-      if (!existingAttendanceQuery.empty) {
-        UI.showNotification(`⚠️ ${personName} уже отмечен(а) сегодня`, 'warning');
-        return;
+      if (!lastAttendanceQuery.empty) {
+        const lastEntry = lastAttendanceQuery.docs[0].data();
+        const lastEntryTimestamp = lastEntry.timestamp;
+        
+        // Проверяем, прошло ли достаточно времени
+        if (now - lastEntryTimestamp < CONFIG.ATTENDANCE_COOLDOWN_MS) {
+          const remainingTimeMs = CONFIG.ATTENDANCE_COOLDOWN_MS - (now - lastEntryTimestamp);
+          const minutes = Math.ceil(remainingTimeMs / (1000 * 60));
+          UI.showNotification(`⚠️ ${personName} уже отмечался(ась) недавно. Пожалуйста, подождите ${minutes} минут.`, 'warning');
+          return;
+        }
       }
+      // --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
       // Добавляем запись в Firebase
       try {
         await attendanceCol.add({
           personId: personId, // Сохраняем ID, если есть
           name: personName,
-          date: today,
+          date: new Date().toLocaleDateString('ru-RU'), 
           time: new Date().toLocaleTimeString('ru-RU'),
-          timestamp: Date.now()
+          timestamp: now // Используем текущий timestamp для новой проверки
         });
         await TokenManager.markAsUsed(token); // Отмечаем токен использованным в Firebase
-
+        
         state.currentView = 'success';
         Render.view();
-
+        
         setTimeout(() => {
           window.location.href = window.location.pathname;
         }, 3000);
@@ -586,40 +610,43 @@
         UI.showNotification('❌ Ошибка при регистрации посещения', 'error');
       }
     },
-
+    
     async exportToExcel() {
       // Данные будут уже в state.attendance благодаря onSnapshot
       const data = [['№', 'ФИО', 'Дата', 'Время']];
       state.attendance.forEach((entry, i) => {
         data.push([i + 1, entry.name, entry.date, entry.time]);
       });
-
+      
       const ws = XLSX.utils.aoa_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Посещаемость');
-
+      
       const date = new Date().toLocaleDateString('ru-RU').replace(/\./g, '-');
       XLSX.writeFile(wb, `attendance_${date}.xlsx`);
       UI.showNotification('✅ Файл сохранён', 'success');
     },
-
+    
     async clearAttendance() {
       if (confirm('Удалить все записи о посещении? Это действие необратимо!')) {
         try {
+          // Удаляем записи о посещении
           const querySnapshot = await attendanceCol.get();
-          const batch = db.batch();
+          const batchAttendance = db.batch();
           querySnapshot.forEach(doc => {
-            batch.delete(doc.ref);
+            batchAttendance.delete(doc.ref);
           });
-          await batch.commit();
+          await batchAttendance.commit();
+          log('Attendance records cleared.');
 
-          // Очищаем использованные токены тоже, так как они относятся к посещениям
+          // Очищаем использованные токены
           const tokensSnapshot = await usedTokensCol.get();
-          const tokenBatch = db.batch();
+          const batchTokens = db.batch();
           tokensSnapshot.forEach(doc => {
-            tokenBatch.delete(doc.ref);
+            batchTokens.delete(doc.ref);
           });
-          await tokenBatch.commit();
+          await batchTokens.commit();
+          log('Used tokens cleared.');
 
           UI.showNotification('✅ Журнал и использованные токены очищены в Firebase', 'success');
           // state.attendance и state.usedTokens будут обновлены через onSnapshot
@@ -630,40 +657,40 @@
         }
       }
     },
-
+    
     refreshToken() {
       TokenManager.create();
       UI.updateQRCode();
       UI.showNotification('✅ QR-код обновлён', 'success');
       Render.adminView();
     },
-
+    
     showView(view) {
       state.currentView = view;
       Render.view();
     }
   };
-
+  
   // ==================== РЕНДЕРИНГ ====================
-
+  
   const Render = {
     adminView() {
       const hasToken = state.currentToken && state.tokenExpiry > Date.now();
-
+      
       document.getElementById('app').innerHTML = `
         <div class="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 p-4">
           <div class="max-w-7xl mx-auto">
             <h1 class="text-4xl md:text-5xl font-bold text-white text-center mb-8 drop-shadow-lg">
               🎯 Система учёта посещаемости
             </h1>
-
+            
             <div class="grid md:grid-cols-2 gap-6">
               <!-- QR Panel -->
               <div class="bg-white rounded-2xl shadow-2xl p-6">
                 <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">
                   QR-код для отметки
                 </h2>
-
+                
                 <div id="qr-status">
                   ${hasToken ? `
                     <div class="text-center">
@@ -671,32 +698,32 @@
                       <div class="inline-block p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl mb-6">
                         <div id="qr-container"></div>
                       </div>
-
+                      
                       <!-- Timer Circle -->
                       <div class="relative inline-block mb-4">
                         <svg class="timer-circle w-32 h-32">
                           <circle class="timer-circle-bg" cx="64" cy="64" r="60" />
-                          <circle id="timer-circle" class="timer-circle-progress"
+                          <circle id="timer-circle" class="timer-circle-progress" 
                                   cx="64" cy="64" r="60" stroke="#10b981" />
                         </svg>
                         <div class="absolute inset-0 flex items-center justify-center">
                           <span id="timer-text" class="text-3xl font-bold text-green-600">3:00</span>
                         </div>
                       </div>
-
+                      
                       <!-- Progress Bar -->
                       <div class="w-full bg-gray-200 rounded-full h-3 mb-4 overflow-hidden">
                         <div id="timer-bar" class="h-full bg-green-500" style="width: 100%"></div>
                       </div>
-
+                      
                       <!-- Refresh Button -->
-                      <button onclick="App.refreshToken()"
-                              class="w-full px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600
-                                     text-white rounded-lg hover:shadow-lg transition-all
+                      <button onclick="App.refreshToken()" 
+                              class="w-full px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 
+                                     text-white rounded-lg hover:shadow-lg transition-all 
                                      transform hover:scale-105 font-semibold">
                         🔄 Обновить QR-код
                       </button>
-
+                      
                       <p class="text-xs text-gray-500 mt-2">
                         Автообновление каждые 3 минуты
                       </p>
@@ -705,9 +732,9 @@
                     <div class="text-center py-8">
                       <div class="text-6xl mb-4">📱</div>
                       <p class="text-gray-600 mb-4">QR-код не активен</p>
-                      <button onclick="App.refreshToken()"
-                              class="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600
-                                     text-white rounded-lg hover:shadow-lg transition-all
+                      <button onclick="App.refreshToken()" 
+                              class="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 
+                                     text-white rounded-lg hover:shadow-lg transition-all 
                                      transform hover:scale-105 text-lg font-semibold">
                         ✨ Создать QR-код
                       </button>
@@ -715,23 +742,23 @@
                   `}
                 </div>
               </div>
-
+              
               <!-- Control Panel -->
               <div class="bg-white rounded-2xl shadow-2xl p-6">
                 <h2 class="text-2xl font-bold text-gray-800 mb-6">
                   Панель управления
                 </h2>
-
+                
                 <div class="space-y-4">
                   <div>
                     <label class="block text-gray-700 font-medium mb-2">
                       📁 Загрузить список (Excel: "ID | ФИО")
                     </label>
                     <input type="file" accept=".xlsx,.xls" onchange="App.loadExcelFile(event)"
-                           class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg
+                           class="w-full px-4 py-2 border-2 border-gray-300 rounded-lg 
                                   cursor-pointer hover:border-purple-500 transition" />
                   </div>
-
+                  
                   <div class="grid grid-cols-2 gap-4">
                     <div class="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg">
                       <p class="text-3xl font-bold text-blue-600">${state.allowedPeople.length}</p>
@@ -742,17 +769,17 @@
                       <p class="text-sm text-gray-600">Отмечено</p>
                     </div>
                   </div>
-
+                  
                   <div class="space-y-2">
-                    <button onclick="App.showView('journal')"
-                            class="w-full px-6 py-3 bg-purple-600 text-white rounded-lg
+                    <button onclick="App.showView('journal')" 
+                            class="w-full px-6 py-3 bg-purple-600 text-white rounded-lg 
                                    hover:bg-purple-700 transition-all">
                       📋 Открыть журнал
                     </button>
-
+                    
                     ${state.attendance.length > 0 ? `
-                      <button onclick="App.exportToExcel()"
-                              class="w-full px-6 py-3 bg-green-600 text-white rounded-lg
+                      <button onclick="App.exportToExcel()" 
+                              class="w-full px-6 py-3 bg-green-600 text-white rounded-lg 
                                      hover:bg-green-700 transition-all">
                         💾 Экспорт в Excel
                       </button>
@@ -761,13 +788,13 @@
                 </div>
               </div>
             </div>
-
+            
             ${state.attendance.length > 0 ? `
               <div class="bg-white rounded-2xl shadow-2xl p-6 mt-6">
                 <h3 class="text-xl font-bold text-gray-800 mb-4">Последние отметки</h3>
                 <div class="space-y-2">
-                  ${state.attendance.slice(-5).reverse().map(entry => `
-                    <div class="flex justify-between items-center p-3
+                  ${state.attendance.slice(0, 5).map(entry => `
+                    <div class="flex justify-between items-center p-3 
                                 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg">
                       <span class="font-medium text-gray-800">${entry.name}</span>
                       <div class="text-right">
@@ -782,7 +809,7 @@
           </div>
         </div>
       `;
-
+      
       // Генерируем QR после рендера
       if (hasToken) {
         setTimeout(() => {
@@ -791,31 +818,27 @@
         }, 100);
       }
     },
-
+    
     registerView() {
       const urlParams = new URLSearchParams(window.location.search);
       const token = urlParams.get('t');
-
-      // Примечание: validate токена происходит в App.registerAttendance
-      // Чтобы избежать двойной проверки и асинхронности здесь
-      // Добавим спиннер или сообщение о загрузке, пока не будет ясно, что с токеном
-
+      
       document.getElementById('app').innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600
+        <div class="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 
                     flex items-center justify-center p-4">
           <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
-            <h2 class="text-3xl font-bold mb-6 text-center bg-gradient-to-r
+            <h2 class="text-3xl font-bold mb-6 text-center bg-gradient-to-r 
                        from-blue-600 to-purple-600 text-transparent bg-clip-text">
               Отметка посещаемости
             </h2>
-
+            
             <div class="mb-4" id="id-input-group">
               <label class="block text-gray-700 font-medium mb-2">
                 Введите ваш уникальный ID:
               </label>
               <input id="uniqueIdInput" type="text"
                      placeholder="Например, 12345"
-                     class="w-full px-4 py-3 rounded-lg border-2 border-gray-300
+                     class="w-full px-4 py-3 rounded-lg border-2 border-gray-300 
                             focus:border-purple-500 focus:outline-none transition" />
             </div>
 
@@ -825,28 +848,28 @@
               </label>
               <input id="nameInput" type="text"
                      placeholder="Фамилия Имя Отчество"
-                     class="w-full px-4 py-3 rounded-lg border-2 border-gray-300
+                     class="w-full px-4 py-3 rounded-lg border-2 border-gray-300 
                             focus:border-purple-500 focus:outline-none transition" disabled />
             </div>
-
+            
             <div class="mb-6 flex items-center">
-              <input type="checkbox" id="notRegisteredCheckbox" class="h-4 w-4 text-purple-600
+              <input type="checkbox" id="notRegisteredCheckbox" class="h-4 w-4 text-purple-600 
                                                          focus:ring-purple-500 border-gray-300 rounded">
               <label for="notRegisteredCheckbox" class="ml-2 text-gray-700">
                 Я не зарегистрирован(а)
               </label>
             </div>
-
+            
             <button onclick="App.registerAttendance()"
-                    class="w-full bg-gradient-to-r from-blue-600 to-purple-600
-                           text-white py-3 rounded-lg font-semibold
+                    class="w-full bg-gradient-to-r from-blue-600 to-purple-600 
+                           text-white py-3 rounded-lg font-semibold 
                            hover:shadow-lg transition-all transform hover:scale-105">
               ✅ Отметиться
             </button>
           </div>
         </div>
       `;
-
+      
       const notRegisteredCheckbox = document.getElementById('notRegisteredCheckbox');
       const idInputGroup = document.getElementById('id-input-group');
       const uniqueIdInput = document.getElementById('uniqueIdInput');
@@ -876,10 +899,10 @@
         uniqueIdInput?.focus();
       }, 100);
     },
-
+    
     successView() {
       document.getElementById('app').innerHTML = `
-        <div class="min-h-screen bg-gradient-to-br from-green-500 to-emerald-600
+        <div class="min-h-screen bg-gradient-to-br from-green-500 to-emerald-600 
                     flex items-center justify-center p-4">
           <div class="bg-white rounded-2xl shadow-2xl p-8 text-center max-w-md">
             <div class="text-7xl mb-4 animate-bounce">✅</div>
@@ -890,7 +913,7 @@
         </div>
       `;
     },
-
+    
     journalView() {
       document.getElementById('app').innerHTML = `
         <div class="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-4">
@@ -898,13 +921,13 @@
             <div class="bg-white rounded-2xl shadow-2xl p-6">
               <div class="flex justify-between items-center mb-6">
                 <h2 class="text-3xl font-bold text-gray-800">📋 Журнал</h2>
-                <button onclick="App.showView('admin')"
-                        class="px-4 py-2 bg-gray-600 text-white rounded-lg
+                <button onclick="App.showView('admin')" 
+                        class="px-4 py-2 bg-gray-600 text-white rounded-lg 
                                hover:bg-gray-700 transition">
                   ← Назад
                 </button>
               </div>
-
+              
               ${state.attendance.length === 0 ? `
                 <p class="text-gray-600 text-center py-12">Пусто</p>
               ` : `
@@ -930,15 +953,15 @@
                     </tbody>
                   </table>
                 </div>
-
+                
                 <div class="mt-6 flex gap-4">
-                  <button onclick="App.exportToExcel()"
-                          class="px-6 py-3 bg-green-600 text-white rounded-lg
+                  <button onclick="App.exportToExcel()" 
+                          class="px-6 py-3 bg-green-600 text-white rounded-lg 
                                  hover:bg-green-700 transition">
                     💾 Экспорт
                   </button>
-                  <button onclick="App.clearAttendance()"
-                          class="px-6 py-3 bg-red-600 text-white rounded-lg
+                  <button onclick="App.clearAttendance()" 
+                          class="px-6 py-3 bg-red-600 text-white rounded-lg 
                                  hover:bg-red-700 transition">
                     🗑 Очистить
                   </button>
@@ -949,7 +972,7 @@
         </div>
       `;
     },
-
+    
     view() {
       switch(state.currentView) {
         case 'admin':
@@ -969,12 +992,12 @@
       }
     }
   };
-
+  
   // ==================== ИНИЦИАЛИЗАЦИЯ ====================
-
+  
   async function init() {
     log('Initializing...');
-
+    
     // Подписываемся на изменения в коллекциях Firebase для Real-time обновлений
     state.allowedPeopleListener = allowedPeopleCol.onSnapshot(snapshot => {
       state.allowedPeople = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -999,17 +1022,17 @@
 
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get('t');
-
+    
     if (token) {
       state.currentView = 'register';
       log('Token in URL, showing registration');
     } else {
       state.currentView = 'admin';
-
+      
       // Восстанавливаем или создаем токен из локального кэша
       const savedToken = localCache.get('currentToken');
       const savedExpiry = localCache.get('tokenExpiry');
-
+      
       if (savedToken && savedExpiry && savedExpiry > Date.now()) {
         state.currentToken = savedToken;
         state.tokenExpiry = savedExpiry;
@@ -1019,14 +1042,14 @@
         TokenManager.create();
       }
     }
-
+    
     // Экспортируем в глобальную область
     window.App = App;
-
+    
     // Рендерим
     Render.view();
   }
-
+  
   // Запуск при загрузке DOM
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -1037,4 +1060,3 @@
 </script>
 </body>
 </html>
-
